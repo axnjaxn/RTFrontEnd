@@ -4,62 +4,78 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileWriter;
 import java.io.IOException;
-import java.util.Scanner;
 
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
+import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.KeyStroke;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileFilter;
 
 public class Editor implements ActionListener {
 	private JFrame frame;
-	private JTextArea text;
+	private JTextArea options, text;
 	
 	private final JFileChooser chooser = new JFileChooser();
 	private static final String renderer = "bin/ReiTrei"; 
-	private String filename, path;
+	private FileAdapter scenefile;
 
 	private void addMenuItem(JMenu menu, String name) {
-		JMenuItem item = new JMenuItem(name);
-		item.addActionListener(this);
-		menu.add(item);
+		addMenuItem(menu, name, this);
 	}
 	
 	private void addMenuItem(JMenu menu, String name, ActionListener listener) {
+		addMenuItem(menu, name, listener, null);
+	}
+	
+	private void addMenuItem(JMenu menu, String name, ActionListener listener, String accel) {
 		JMenuItem item = new JMenuItem(name);
-		item.addActionListener(listener);
+		if (listener != null) item.addActionListener(listener);
+		else item.addActionListener(this);
+		if (accel != null) item.setAccelerator(KeyStroke.getKeyStroke(accel));
 		menu.add(item);
 	}
 	
 	private void resetTitle() {
-		if (filename == null) frame.setTitle("Editor");
-		else frame.setTitle("Editor: " + filename);
+		String title = "Editor";
+		if (scenefile.bound()) {
+			title = title + ": " + scenefile.getName();
+			if (scenefile.dirty()) title = title + "*";
+		}			
+		frame.setTitle(title);
 	}
 	
-	private void save(File file) {
+	private void markDirty() {
+		if (!scenefile.dirty()) {
+			scenefile.markDirty();
+			resetTitle();
+		}
+	}
+	
+	private void save() {
 		try {
-			FileWriter fw = new FileWriter(file);
-			fw.write(text.getText());
-			fw.close();
+			scenefile.save(text.getText());
+			scenefile.clearDirty();
+			resetTitle();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
 	}
 	
-	private void load(File file) {
+	private void load() {
 		try {
-			String allText = "";
-			Scanner scanner = new Scanner(file);
-			while (scanner.hasNext())
-				allText = allText + scanner.nextLine() + "\n";
-			scanner.close();
-			text.setText(allText);
+			text.setText(scenefile.load());
+			scenefile.clearDirty();
+			resetTitle();
 		} catch (FileNotFoundException e) {
 			return;
 		}
@@ -67,7 +83,7 @@ public class Editor implements ActionListener {
 	
 	
 	public void newFile() {
-		filename = path = null;
+		scenefile.release();
 		resetTitle();
 		text.setText(null);
 	}
@@ -75,35 +91,24 @@ public class Editor implements ActionListener {
 	public void openFile() {
 		int returnVal = chooser.showOpenDialog(frame);
 		if (returnVal == JFileChooser.APPROVE_OPTION) {
-            File file = chooser.getSelectedFile();
-            filename = file.getName();
-            path = file.getAbsolutePath();
-            resetTitle();
-            load(file);
+            scenefile.bind(chooser.getSelectedFile());
+            load();
         } else {
         	System.out.println("Open command cancelled by user.");
         }
 	}
 	
 	public void saveFile() {
-		if (path == null) {
-			saveAsFile();
-			return;
-		}
-		
-		File file = new File(path);
-		save(file);
+		if (scenefile.bound()) save();
+		else saveAsFile();
 	}
 	
 	public void saveAsFile() {
 		int returnVal = chooser.showSaveDialog(frame);
 		if (returnVal == JFileChooser.APPROVE_OPTION) {
-            File file = chooser.getSelectedFile();
-            if (file.exists()) return; //uf confirm existing files
-            filename = file.getName();
-            path = file.getAbsolutePath();
-            resetTitle();
-            save(file);
+            scenefile.bind(chooser.getSelectedFile());
+            //if (scenefile.exists()) return; //uf confirm existing files
+            save();
         } 
 		else {
         	System.out.println("Save as command cancelled by user.");
@@ -119,7 +124,7 @@ public class Editor implements ActionListener {
 		saveFile();
 		try {
 			Runtime rt = Runtime.getRuntime();
-			rt.exec(renderer + " " + path + " " + options) ;
+			rt.exec(renderer + " " + scenefile.getPath() + " " + options);
 		}
 		catch(Exception e){
 			System.out.println(e.getMessage());
@@ -131,13 +136,14 @@ public class Editor implements ActionListener {
 	}
 	
 	public void renderFile() {
-		render("--size 800 600");
+		render(options.getText());
 	}
 	
 	public Editor() {
 		frame = new JFrame("Editor");// The string is the title of the frame
-		resetTitle();
 		frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);// Otherwise it will only hide
+		scenefile = new FileAdapter();
+		resetTitle();
 
 		chooser.setFileFilter(new FileFilter() {
 			public boolean accept(File f) {
@@ -155,63 +161,95 @@ public class Editor implements ActionListener {
 		});
 		
 		JMenuBar bar = new JMenuBar();
+		JMenu menu;
 
-		JMenu menu = new JMenu("File");
+		menu = new JMenu("File");
 		addMenuItem(menu, "New", new ActionListener() {
 			public void actionPerformed(ActionEvent e) {newFile();}			
-		});
+		}, "control N");
 		addMenuItem(menu, "Open...", new ActionListener() {
 			public void actionPerformed(ActionEvent e) {openFile();}
-		});
+		}, "control O");
 		addMenuItem(menu, "Save", new ActionListener() {
 			public void actionPerformed(ActionEvent e) {saveFile();}
-		});		
+		}, "control S");
 		addMenuItem(menu, "Save As...", new ActionListener() {
 			public void actionPerformed(ActionEvent e) {saveAsFile();}
 		});
 		addMenuItem(menu, "Revert", new ActionListener() {
-			public void actionPerformed(ActionEvent e) {if (filename != null) load(new File(path));}//uf
+			public void actionPerformed(ActionEvent e) {if (scenefile.bound()) load();}//uf
 		});
 		addMenuItem(menu, "Close", new ActionListener() {
 			public void actionPerformed(ActionEvent e) {closeFile();}//uf
+		}, "control W");
+		addMenuItem(menu, "Exit", new ActionListener() {
+			public void actionPerformed(ActionEvent e) {frame.dispose();}
 		});
-		addMenuItem(menu, "Exit");
 		bar.add(menu);
 
 		menu = new JMenu("Edit");
-		addMenuItem(menu, "Undo");
-		addMenuItem(menu, "Redo");
-		addMenuItem(menu, "Cut");
-		addMenuItem(menu, "Copy");
-		addMenuItem(menu, "Paste");
+		addMenuItem(menu, "Undo", new ActionListener() {
+			public void actionPerformed(ActionEvent arg0) {
+				System.out.println("Undo not implemented.");
+			}
+		}, "control Z");
+		addMenuItem(menu, "Redo", new ActionListener() {
+			public void actionPerformed(ActionEvent arg0) {
+				System.out.println("Redo not implemented.");
+			}
+		}, "control Y");
+		addMenuItem(menu, "Cut", new ActionListener() {
+			public void actionPerformed(ActionEvent e) {text.cut();}			
+		}, "control X");
+		addMenuItem(menu, "Copy", new ActionListener() {
+			public void actionPerformed(ActionEvent e) {text.copy();}			
+		}, "control C");
+		addMenuItem(menu, "Paste", new ActionListener() {
+			public void actionPerformed(ActionEvent e) {text.paste();}
+		}, "control V");
 		addMenuItem(menu, "Preferences");
 		bar.add(menu);
 
 		menu = new JMenu("Render");
 		addMenuItem(menu, "Preview", new ActionListener() {
 			public void actionPerformed(ActionEvent e) {previewFile();}
-		});
+		}, "F5");
 		addMenuItem(menu, "Render", new ActionListener() {
 			public void actionPerformed(ActionEvent e) {renderFile();}
-		});
+		}, "F6");
 		addMenuItem(menu, "Render Settings");
 		bar.add(menu);
 
 		menu = new JMenu("Help");
 		addMenuItem(menu, "About");
-		addMenuItem(menu, "Online Documentation");
+		addMenuItem(menu, "Online Documentation", this, "F1");
 		bar.add(menu);
 
 		frame.setJMenuBar(bar);
 
 		text = new JTextArea();
 		text.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+		text.getDocument().addDocumentListener(new DocumentListener() {
+			public void changedUpdate(DocumentEvent arg0) {markDirty();}
+			public void insertUpdate(DocumentEvent arg0) {markDirty();}
+			public void removeUpdate(DocumentEvent arg0) {markDirty();}
+		});
 
+		options = new JTextArea(1, 64);
+		options.setText("--size 800 600");
+			
 		JScrollPane areaScrollPane = new JScrollPane(text);
 		areaScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
 		areaScrollPane.setPreferredSize(new Dimension(640, 480));
 		
-		frame.getContentPane().add(areaScrollPane);
+		JPanel listPane = new JPanel();
+		listPane.setLayout(new BoxLayout(listPane, BoxLayout.PAGE_AXIS));
+		
+		listPane.add(options);
+		listPane.add(areaScrollPane);
+		listPane.add(Box.createRigidArea(new Dimension(0,5)));
+		
+		frame.getContentPane().add(listPane);
 		
 		frame.pack();
 		frame.setVisible(true);
