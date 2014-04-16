@@ -5,6 +5,7 @@ import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -13,6 +14,7 @@ import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
@@ -28,6 +30,7 @@ public class Editor implements ActionListener {
 	private final JFileChooser chooser = new JFileChooser();
 	private static final String renderer = "bin/ReiTrei"; 
 	private FileAdapter scenefile;
+	private Process tracer = null;
 
 	private void addMenuItem(JMenu menu, String name) {
 		addMenuItem(menu, name, this);
@@ -98,20 +101,22 @@ public class Editor implements ActionListener {
         }
 	}
 	
-	public void saveFile() {
-		if (scenefile.bound()) save();
-		else saveAsFile();
+	public boolean saveFile() {
+		if (scenefile.bound()) {save(); return true;}
+		else return saveAsFile();
 	}
 	
-	public void saveAsFile() {
+	public boolean saveAsFile() {
 		int returnVal = chooser.showSaveDialog(frame);
 		if (returnVal == JFileChooser.APPROVE_OPTION) {
             scenefile.bind(chooser.getSelectedFile());
             //if (scenefile.exists()) return; //uf confirm existing files
             save();
+            return true;
         } 
 		else {
         	System.out.println("Save as command cancelled by user.");
+        	return false;
         }
 	}
 	
@@ -121,18 +126,36 @@ public class Editor implements ActionListener {
 	}
 	
 	public void render(String options) {
-		saveFile();
+		if (tracer != null || !saveFile()) return;
 		try {
 			Runtime rt = Runtime.getRuntime();
-			rt.exec(renderer + " " + scenefile.getPath() + " " + options);
+			tracer = rt.exec(renderer + " " + scenefile.getPath() + " " + options);
 		}
 		catch(Exception e){
-			System.out.println(e.getMessage());
+			System.out.println("Can't launch tracer: " + e.getMessage());
 		}
+		javax.swing.SwingUtilities.invokeLater(new Runnable() {
+			public void run() {
+				try {
+					tracer.waitFor();
+					if (tracer.exitValue() != 0) {
+						InputStream err = tracer.getErrorStream();
+						StringBuilder sb = new StringBuilder();
+						int n = err.available();
+						for (int i = 0; i < n; i++)
+							sb.append((char)err.read());
+						JOptionPane.showMessageDialog(frame, sb.toString());
+					}
+				} catch (Exception e) {
+					System.out.println(e.getMessage());
+				}
+				tracer = null;
+			}
+		});		
 	}
 	
 	public void previewFile() {
-		render("--no-output --size 256 256");
+		render("--no-output --no-aa --size 256 256");
 	}
 	
 	public void renderFile() {
